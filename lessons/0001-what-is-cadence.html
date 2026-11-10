@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>0001 · What is Cadence?</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<header class="lesson">
+  <div class="kicker">Lesson 0001 · Cadence codebase · ~10 min</div>
+  <h1>What is Cadence?</h1>
+  <p class="subtitle">The product you'll be building features for, explained without any code.</p>
+</header>
+
+<p><strong>Cadence is a website for selling and taking online courses.</strong> Think of a small Udemy. Instructors put courses up, students pay for them and work through them, and admins keep the place tidy.</p>
+
+<p>It's the practice project for Matt Pocock's <a href="https://www.aihero.dev/workshops/ai-coding-crash-course">AI Coding Crash Course</a>. It's built to feel like a real product with real rough edges, so adding features to it feels like real work.</p>
+
+<h2>Who uses it</h2>
+<table>
+  <tr><th>Role</th><th>What they do</th><th>Example user (seed data)</th></tr>
+  <tr><td><strong>Student</strong></td><td>Browses the catalog, buys a course, watches lessons, takes quizzes, tracks progress on a dashboard</td><td>Emma Wilson</td></tr>
+  <tr><td><strong>Instructor</strong></td><td>Creates a course, organizes it into modules and lessons, adds videos and quizzes, sets the price, sees enrolled students</td><td>Sarah Chen</td></tr>
+  <tr><td><strong>Admin</strong></td><td>Manages all users, all courses and the course categories</td><td>Alex Rivera</td></tr>
+</table>
+
+<h2>What a course looks like</h2>
+<div class="flow">
+  <div class="step">Course<small>"Introduction to TypeScript", $49.99</small></div><span class="arrow">contains</span>
+  <div class="step">Modules<small>"Type System Fundamentals"</small></div><span class="arrow">contain</span>
+  <div class="step">Lessons<small>text + video, optional quiz</small></div>
+</div>
+<p>Courses belong to a category (Programming, Design, Data Science…) and have a status: <em>draft</em> (instructor still working on it), <em>published</em> (visible and buyable) or <em>archived</em>.</p>
+
+<h2>A student's journey</h2>
+<ol>
+  <li><strong>Browse</strong> the catalog and open a course page with its description and syllabus.</li>
+  <li><strong>Buy</strong> it. There's no real payment provider: clicking "confirm" records the purchase and enrolls you.</li>
+  <li><strong>Learn</strong>: watch each lesson's video, read its content, pass its quiz. Progress is tracked per lesson.</li>
+  <li><strong>Dashboard</strong> shows courses <em>in progress</em> and <em>completed</em>.</li>
+</ol>
+
+<h2>The money side (your corner)</h2>
+<ul>
+  <li><strong>Prices are stored in cents</strong>, so <code>4999</code> means $49.99.</li>
+  <li><strong>Pricing by country (PPP).</strong> The price drops by 30%, 50% or 70% depending on where the buyer is. For example, a $49.99 course costs $25.00 from India. Instructors can switch this off per course. A discounted purchase is locked to the country it was bought in.</li>
+  <li><strong>Team purchases.</strong> A company buys <em>N</em> seats and gets <em>N</em> coupon codes. Employees redeem a code at <code>/redeem/&lt;code&gt;</code> to get access. The buyer manages codes on the <strong>Team</strong> page.</li>
+</ul>
+
+<h2>Quirks of a practice app</h2>
+<ul>
+  <li><strong>No passwords.</strong> Login is by email only, and a <strong>dev panel</strong> lets you switch between any seeded user instantly.</li>
+  <li>The dev panel can also <strong>fake your country</strong>, so you can watch PPP prices change.</li>
+  <li><strong>No real payments.</strong> Stripe integration is one of the features on the to-do list.</li>
+</ul>
+
+<h2>What you'll be asked to build</h2>
+<p>The backlog lives in <code>_internal/feature-ideas.md</code>, sorted by difficulty. A taste:</p>
+<table>
+  <tr><th>Size</th><th>Examples</th></tr>
+  <tr><td>Small</td><td>Course announcements, bookmarks and notes, lesson search, revenue reports with CSV export</td></tr>
+  <tr><td>Medium</td><td>Reviews and star ratings, certificates, instructor analytics, audit log</td></tr>
+  <tr><td>Large</td><td>Stripe payments, bundle pricing, notifications, subscriptions, affiliate payouts</td></tr>
+</table>
+<p class="note">Several of these (revenue reports, Stripe, bundles, subscriptions, affiliates) are money features, which is where your fintech experience counts most.</p>
+
+<h2>Check yourself</h2>
+<p>Answer from memory.</p>
+<div class="quiz">
+  <div class="q" data-answer="1" data-explain="Instructors build courses. Students only consume them, and admins manage the platform.">
+    <p>1. Who creates modules and lessons?</p>
+    <button>Students</button>
+    <button>Instructors</button>
+    <button>Admins</button>
+  </div>
+  <div class="q" data-answer="2" data-explain="Course → modules → lessons. Quizzes hang off individual lessons.">
+    <p>2. How is a course organized?</p>
+    <button>Lessons contain modules containing quizzes</button>
+    <button>Quizzes contain lessons containing modules</button>
+    <button>Course contains modules containing lessons</button>
+  </div>
+  <div class="q" data-answer="0" data-explain="Each seat becomes a coupon code. Employees redeem codes to get access.">
+    <p>3. A company buys 5 seats. What do they get?</p>
+    <button>Five coupon codes to share</button>
+    <button>Five accounts created for them</button>
+    <button>One shared login for everyone</button>
+  </div>
+  <div class="q" data-answer="2" data-explain="Payments are mocked. Confirming records a purchase row and enrolls the student; Stripe is on the backlog.">
+    <p>4. What happens to money when a student buys?</p>
+    <button>Stripe charges their card</button>
+    <button>Instructor invoices them later</button>
+    <button>Nothing; payment is simulated</button>
+  </div>
+</div>
+
+<h2>Try it (5 minutes)</h2>
+<ol class="task">
+  <li>In the terminal: <code>npm install && npm run db:migrate && npm run db:seed && npm run dev</code></li>
+  <li>Open <a href="http://localhost:5173">localhost:5173</a>. Use the dev panel to become <strong>Emma Wilson</strong> (student) and buy a course.</li>
+  <li>Switch the dev country to <strong>India</strong> and look at another course's price.</li>
+  <li>Become <strong>Sarah Chen</strong> (instructor) and open one of her courses in the instructor area.</li>
+</ol>
+
+<h2>Read next</h2>
+<p><strong>Primary source:</strong> the repo's own <code>README.md</code> and <code>_internal/feature-ideas.md</code>. Read the feature list and pick one you'd like to build first. We'll aim the next lessons at it.</p>
+
+<footer class="lesson">
+  Anything unclear? <strong>Ask your agent follow-up questions</strong> in the terminal. It's your teacher and has read this codebase.
+  <br>Reference: <a href="../reference/cadence-map.html">Cadence map (cheat sheet)</a>
+  <nav><span>← Start</span><a href="0002-follow-the-money.html">Next: 0002 Follow the money (how a purchase works in code) →</a></nav>
+</footer>
+
+<script src="../assets/quiz.js"></script>
+</body>
+</html>

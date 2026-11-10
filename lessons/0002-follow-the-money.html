@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>0002 · Follow the money: one request through Cadence</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+<header class="lesson">
+  <div class="kicker">Lesson 0002 · Cadence codebase · ~15 min</div>
+  <h1>Follow the money</h1>
+  <p class="subtitle">One purchase, traced from URL to SQLite row. After this you can find where any page in Cadence gets its data.</p>
+</header>
+
+<p>Cadence is a small Udemy: instructors publish courses, students buy and take them, and teams buy seats as coupons. Every feature you build will follow the same five-layer path, so learn it once on the code path you care about most: <em>money</em>.</p>
+
+<div class="flow">
+  <div class="step">URL<small>/courses/:slug/purchase</small></div><span class="arrow">→</span>
+  <div class="step">routes.ts<small>URL → file</small></div><span class="arrow">→</span>
+  <div class="step">route module<small>loader / action</small></div><span class="arrow">→</span>
+  <div class="step">service<small>app/services/*</small></div><span class="arrow">→</span>
+  <div class="step">Drizzle<small>app/db/schema.ts</small></div><span class="arrow">→</span>
+  <div class="step">SQLite<small>data.db</small></div>
+</div>
+
+<h2>1. URL → file</h2>
+<p>Routes are configured in one file, not inferred from folder names. Each entry maps a URL pattern to a <a href="https://reactrouter.com/start/framework/route-module">route module</a>:</p>
+<pre><code>route("courses/:slug/purchase", "routes/courses.$slug.purchase.tsx"),</code></pre>
+<span class="src">app/routes.ts:15</span>
+<p>Most routes sit inside <code>layout("routes/layout.app.tsx", [...])</code>, which wraps them in the sidebar shell. When you add a page, you add a line here.</p>
+
+<h2>2. The route module: three exports, two run on the server</h2>
+<table>
+  <tr><th>Export</th><th>Runs</th><th>In the purchase route</th></tr>
+  <tr><td><code>loader</code></td><td>Server, on GET</td><td>Looks up the course, resolves the buyer's country, computes the PPP price for <em>display</em> (line 57)</td></tr>
+  <tr><td><code>action</code></td><td>Server, on POST</td><td>Validates the form with Zod, <strong>recomputes</strong> the price, writes the purchase (line 120)</td></tr>
+  <tr><td><code>default</code></td><td>Server render + browser</td><td>Renders <code>loaderData</code>; submits via <code>useFetcher</code> (line 161)</td></tr>
+</table>
+<p>Types come from generated files: <code>import type { Route } from "./+types/courses.$slug.purchase"</code> gives you <code>Route.LoaderArgs</code> and <code>Route.ComponentProps</code>, with <code>loaderData</code> inferred from what the loader returns. Run <code>npm run typecheck</code> (which runs <code>react-router typegen</code>) if they look stale.</p>
+
+<div class="callout"><strong>The fintech instinct, confirmed.</strong> The form posts only an <code>intent</code> (and <code>quantity</code> for teams), never a price. The action calls <code>calculatePppPrice(course.price, country)</code> again on the server (line 142). The price the user sees and the price charged come from the same function, but only the server's copy is trusted.</div>
+
+<p>The action's input is a <a href="https://zod.dev">Zod</a> discriminated union on <code>intent</code>, parsed via the project helper <code>parseFormData</code> (<code>app/lib/validation.ts</code>):</p>
+<pre><code>const purchaseActionSchema = z.discriminatedUnion("intent", [
+  z.object({ intent: z.literal("confirm-purchase") }),
+  z.object({ intent: z.literal("confirm-team-purchase"),
+             quantity: z.coerce.number().int().min(1) }),
+]);</code></pre>
+<span class="src">app/routes/courses.$slug.purchase.tsx:41</span>
+<p>Redirects and HTTP errors are <em>thrown</em>: <code>throw redirect(...)</code>, <code>throw data("Course not found.", { status: 404 })</code>. That's the house style for control flow in loaders and actions.</p>
+
+<h2>3. Services: plain functions, positional params</h2>
+<pre><code>createPurchase(currentUserId, course.id, pppPrice, country);
+enrollUser(currentUserId, course.id, false, false);
+throw redirect(`/courses/${slug}/welcome`);</code></pre>
+<span class="src">app/routes/courses.$slug.purchase.tsx:149–151</span>
+<p>Route modules hold HTTP concerns; <code>app/services/*Service.ts</code> hold the business logic and the queries. Services take positional arguments (a documented convention in <code>purchaseService.ts</code>) and import a shared <code>db</code>.</p>
+
+<h2>4. Drizzle + SQLite: synchronous, integer cents</h2>
+<pre><code>return db.insert(purchases)
+  .values({ userId, courseId, pricePaid, country })
+  .returning()
+  .get();</code></pre>
+<span class="src">app/services/purchaseService.ts · createPurchase</span>
+<p>The driver is <code>better-sqlite3</code>, which is <a href="https://orm.drizzle.team/docs/sqlite/get-started-sqlite">synchronous</a>, so queries end in <code>.get()</code> / <code>.all()</code> / <code>.run()</code> with no <code>await</code>. Money is <code>integer</code> cents throughout (<code>courses.price</code>, <code>purchases.pricePaid</code>, schema.ts:65); <code>formatPrice</code> divides by 100 only at display time.</p>
+
+<div class="callout"><strong>Something to notice.</strong> <code>createPurchase</code> and <code>enrollUser</code> are two separate writes with no <a href="https://orm.drizzle.team/docs/transactions">transaction</a>. <code>enrollUser</code> can throw (for example, "User is already enrolled"). Keep that in mind for the quiz.</div>
+
+<h2>5. How the tests reach the database</h2>
+<p>Service tests never touch <code>data.db</code>. They swap the <code>~/db</code> module for a fresh in-memory SQLite built from the real migrations:</p>
+<pre><code>vi.mock("~/db", () => ({ get db() { return testDb; } }));
+beforeEach(() => { testDb = createTestDb(); base = seedBaseData(testDb); });</code></pre>
+<span class="src">app/services/purchaseService.test.ts:9 · app/test/setup.ts</span>
+<p>This is the pattern you'll copy for every feature: write the service, then test it against <code>createTestDb()</code>.</p>
+
+<h2>Retrieval check</h2>
+<p>Answer from memory. Scroll up only after you've chosen.</p>
+<div class="quiz">
+  <div class="q" data-answer="0" data-explain="A POST to a route runs its action on the server. The loader handles GETs and runs again afterwards when data revalidates.">
+    <p>1. The user clicks <em>Confirm purchase</em>. Which code handles the POST?</p>
+    <button>The route module's action</button>
+    <button>The route module's loader</button>
+    <button>The purchaseService createPurchase function</button>
+    <button>The PurchaseConfirmation component render</button>
+  </div>
+  <div class="q" data-answer="2" data-explain="The form only sends an intent. The action calls calculatePppPrice again with the server-resolved country.">
+    <p>2. Where does the charged price come from?</p>
+    <button>Browser sends it in form</button>
+    <button>Loader stores it in session</button>
+    <button>Server recomputes it inside action</button>
+    <button>Service reads it from cookie</button>
+  </div>
+  <div class="q" data-answer="1" data-explain="India is tier 3 (50% off). Math.round(4999 × 0.5) = Math.round(2499.5) = 2500. Rounding .5 half-up is a real decision in a money path.">
+    <p>3. A course costs <code>4999</code>. A buyer in India (tier 3, 50% off) is charged…</p>
+    <button>2499 cents</button>
+    <button>2500 cents</button>
+    <button>2499.5 cents</button>
+    <button>4999 cents</button>
+  </div>
+  <div class="q" data-answer="2" data-explain="vi.mock replaces ~/db with createTestDb(), an in-memory SQLite built from the drizzle/ migrations.">
+    <p>4. Service tests read and write to…</p>
+    <button>A copied data.db snapshot</button>
+    <button>Drizzle's built-in dry-run mode</button>
+    <button>A mocked in-memory database</button>
+    <button>Transactions rolled back afterwards</button>
+  </div>
+  <div class="q" data-answer="3" data-explain="The purchase row is written first. If enrollUser then throws, there's no transaction to roll it back, so the user has paid with no access.">
+    <p>5. With no transaction around lines 149–150, what can go wrong?</p>
+    <button>Enrollment created without any payment</button>
+    <button>Coupon generated for solo purchases</button>
+    <button>Session cookie overwritten during redirect</button>
+    <button>Payment recorded without any enrollment</button>
+  </div>
+</div>
+
+<h2>Your turn: trace a page yourself</h2>
+<p>Do this in your editor, not in your head. Target: the <strong>Team</strong> page at <code>/team</code>.</p>
+<ol class="task">
+  <li>In <code>app/routes.ts</code>, find which file handles <code>/team</code>.</li>
+  <li>Open its <code>loader</code>. List every service function it calls, and the service file each comes from.</li>
+  <li>Open those functions. Which table(s) do they query?</li>
+  <li>Bonus: what HTTP status does the loader throw if the user has no team, and why might that be the wrong code?</li>
+</ol>
+<details>
+  <summary>Check your answers</summary>
+  <ol>
+    <li><code>routes/team.tsx</code>, inside the app layout.</li>
+    <li><code>getCurrentUserId</code> (<code>~/lib/session</code>), <code>getTeamForAdmin</code> (<code>teamService.ts:25</code>), <code>getCouponsForTeam</code> (<code>couponService.ts:41</code>).</li>
+    <li><code>team_members</code> (to find the team the user administers) and <code>coupons</code>.</li>
+    <li><code>403</code> "You don't have a team…". Arguably that's not forbidden but an empty state; a friendlier page could render a call to action instead.</li>
+  </ol>
+</details>
+
+<p>To see it live: <code>npm install && npm run db:migrate && npm run db:seed && npm run dev</code>. Pick a user in the dev panel, then buy a course. Switch the dev country to see PPP pricing change.</p>
+
+<h2>Read next</h2>
+<p><strong>Primary source:</strong> <a href="https://reactrouter.com/start/framework/route-module">React Router: Route Module</a>, about 10 minutes. Skim the <code>loader</code>, <code>action</code> and component sections. Note that the repo pins <code>react-router</code> 8.3.0.</p>
+
+<footer class="lesson">
+  Stuck, or something didn't click? <strong>Ask your agent follow-up questions</strong> in the terminal. It's your teacher and has read this codebase.
+  <br>Reference: <a href="../reference/cadence-map.html">Cadence map (cheat sheet)</a>
+  <nav><a href="0001-what-is-cadence.html">← 0001 What is Cadence?</a><span>Next: 0003 (the data model), coming soon</span></nav>
+</footer>
+
+<script src="../assets/quiz.js"></script>
+</body>
+</html>

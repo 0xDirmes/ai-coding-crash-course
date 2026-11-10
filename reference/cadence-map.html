@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cadence map: cheat sheet</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<header class="lesson">
+  <div class="kicker">Reference · Cadence codebase</div>
+  <h1>Cadence map</h1>
+  <p class="subtitle">Where things live and the conventions to copy.</p>
+</header>
+
+<h2>The path of every request</h2>
+<div class="flow">
+  <div class="step">app/routes.ts</div><span class="arrow">→</span>
+  <div class="step">app/routes/*.tsx<small>loader · action · default</small></div><span class="arrow">→</span>
+  <div class="step">app/services/*Service.ts</div><span class="arrow">→</span>
+  <div class="step">app/db/schema.ts<small>Drizzle</small></div><span class="arrow">→</span>
+  <div class="step">data.db<small>SQLite</small></div>
+</div>
+
+<h2>Where things live</h2>
+<table>
+  <tr><th>Path</th><th>What</th></tr>
+  <tr><td><code>app/routes.ts</code></td><td>Explicit URL → file map. Most pages are inside <code>layout.app.tsx</code>.</td></tr>
+  <tr><td><code>app/routes/api.*.ts</code></td><td>Resource routes: JSON/redirect endpoints, no UI.</td></tr>
+  <tr><td><code>app/services/</code></td><td>Business logic and queries, with a colocated <code>*.test.ts</code>.</td></tr>
+  <tr><td><code>app/db/schema.ts</code></td><td>All tables and enums (<code>UserRole</code>, <code>CourseStatus</code>…).</td></tr>
+  <tr><td><code>app/db/index.ts</code></td><td>Lazy <code>db</code> proxy (keeps better-sqlite3 out of the client bundle).</td></tr>
+  <tr><td><code>drizzle/</code></td><td>Generated SQL migrations. Tests run these too.</td></tr>
+  <tr><td><code>app/lib/validation.ts</code></td><td><code>parseFormData</code>, <code>parseParams</code>, <code>parseJsonBody</code> (Zod).</td></tr>
+  <tr><td><code>app/lib/session.ts</code></td><td>Cookie session: <code>getCurrentUserId</code>, dev-country override.</td></tr>
+  <tr><td><code>app/lib/ppp.ts</code></td><td>PPP tiers, <code>calculatePppPrice</code>, <code>checkPppAccess</code>.</td></tr>
+  <tr><td><code>app/lib/country.server.ts</code></td><td>Country: dev override → <code>CF-IPCountry</code> → ip-api.com → <code>null</code>.</td></tr>
+  <tr><td><code>app/components/ui/</code></td><td>shadcn/Radix primitives.</td></tr>
+  <tr><td><code>scripts/seed.ts</code></td><td>Seed data (<code>npm run db:seed</code>).</td></tr>
+  <tr><td><code>_internal/feature-ideas.md</code></td><td>Backlog of features to build, by difficulty.</td></tr>
+</table>
+
+<h2>Conventions</h2>
+<ul>
+  <li><strong>Money</strong> is integer cents. Format only at display time (<code>formatPrice</code>).</li>
+  <li><strong>Prices are server-authoritative.</strong> Actions recompute them; forms send an <code>intent</code>.</li>
+  <li><strong>Actions</strong> parse input with a Zod schema, often a <code>discriminatedUnion("intent", …)</code>.</li>
+  <li><strong>Control flow</strong>: <code>throw redirect(...)</code>, <code>throw data(msg, { status })</code>.</li>
+  <li><strong>Services</strong> use positional params and synchronous Drizzle (<code>.get() .all() .run()</code>).</li>
+  <li><strong>Auth</strong>: <code>getCurrentUserId(request)</code>, where <code>null</code> means logged out. Dev users are switched via the DevUI panel.</li>
+  <li><strong>Tests</strong>: <code>vi.mock("~/db", () =&gt; ({ get db() { return testDb; } }))</code> + <code>createTestDb()</code> + <code>seedBaseData()</code>.</li>
+</ul>
+
+<h2>Commands</h2>
+<table>
+  <tr><td><code>npm run dev</code></td><td>Dev server on :5173</td></tr>
+  <tr><td><code>npm run db:generate</code></td><td>Schema change → new migration in <code>drizzle/</code></td></tr>
+  <tr><td><code>npm run db:migrate</code> / <code>db:seed</code></td><td>Apply migrations / seed</td></tr>
+  <tr><td><code>npm run typecheck</code></td><td>Regenerate route types + <code>tsc</code></td></tr>
+  <tr><td><code>npm test</code></td><td>Vitest</td></tr>
+</table>
+
+<h2>Known sharp edges (money paths)</h2>
+<ul>
+  <li><code>createPurchase</code> + <code>enrollUser</code> are not wrapped in a transaction (purchase route, lines 149–150).</li>
+  <li>PPP rounding is <code>Math.round</code> (half-up) on cents.</li>
+  <li>Team purchase stores the <em>total</em> (<code>pppPrice × quantity</code>) in one <code>purchases</code> row.</li>
+  <li>Country lookup silently falls back to <code>null</code>, which means tier 1 (full price).</li>
+</ul>
+
+<footer class="lesson">Lessons: <a href="../lessons/0001-what-is-cadence.html">0001 What is Cadence?</a> · <a href="../lessons/0002-follow-the-money.html">0002 Follow the money</a></footer>
+</body>
+</html>
