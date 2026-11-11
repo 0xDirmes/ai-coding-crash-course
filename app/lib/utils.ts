@@ -11,7 +11,7 @@ export function cn(...inputs: ClassValue[]) {
  */
 export function formatPrice(cents: number | null | undefined): string {
   if (!cents) return "Free";
-  return `$${(cents / 100).toFixed(2)}`;
+  return formatMoney(cents);
 }
 
 /**

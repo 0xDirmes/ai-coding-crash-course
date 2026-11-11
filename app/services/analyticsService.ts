@@ -1,5 +1,5 @@
 import { and, eq, gte, inArray, sql, type SQL } from "drizzle-orm";
-import type { SQLiteColumn } from "drizzle-orm/sqlite-core";
+import { unionAll, type SQLiteColumn } from "drizzle-orm/sqlite-core";
 import { db } from "~/db";
 import {
   CourseStatus,
@@ -19,15 +19,13 @@ import {
   type AnalyticsRange,
 } from "~/lib/analytics-range";
 
-export type { AnalyticsRange };
-
 // ─── Analytics Service ───
 // Instructor dashboard metrics. One entry point: getInstructorAnalytics.
 // Each metric has its own query helper returning a per-course map; the entry
 // point assembles them into CourseAnalytics and derives AnalyticsTotals.
 
 /** Share of gross sales the platform keeps. Earnings = gross × (1 − rate). */
-export const PLATFORM_FEE_RATE = 0.2;
+const PLATFORM_FEE_RATE = 0.2;
 
 const DAY_MS = 86_400_000;
 
@@ -49,21 +47,12 @@ export interface CourseAnalytics {
   averageRating: number | null;
 }
 
-/** Stats across all of the instructor's courses. Money is in cents. */
-export interface AnalyticsTotals {
-  grossSales: number;
-  earnings: number;
-  enrollmentCount: number;
-  completedCount: number;
-  /** Recomputed from summed counts, not averaged per course. */
-  completionRate: number | null;
-  neverStartedCount: number;
-  droppedOffCount: number;
-  ratingStars: number;
-  ratingCount: number;
-  /** Weighted by count (total stars ÷ total ratings); null when none. */
-  averageRating: number | null;
-}
+/**
+ * Stats across all of the instructor's courses. Money is in cents.
+ * completionRate is recomputed from summed counts (not averaged per course);
+ * averageRating is weighted by count (total stars ÷ total ratings).
+ */
+export type AnalyticsTotals = Omit<CourseAnalytics, "courseId">;
 
 export interface InstructorAnalytics {
   courses: CourseAnalytics[];
@@ -294,13 +283,14 @@ function getCohortEngagementByCourse(
     };
     stats.enrolled += 1;
     if (e.completedAt !== null) stats.completed += 1;
-    const studentActivity = activity.get(activityKey(e.userId, e.courseId));
-    if (!studentActivity) {
+    const key = activityKey(e.userId, e.courseId);
+    const latest = activity.get(key) ?? null;
+    if (!activity.has(key)) {
       stats.neverStarted += 1;
     } else if (
       e.completedAt === null &&
-      studentActivity.latest !== null &&
-      studentActivity.latest < inactiveBefore
+      latest !== null &&
+      latest < inactiveBefore
     ) {
       stats.droppedOff += 1;
     }
@@ -309,75 +299,55 @@ function getCohortEngagementByCourse(
   return byCourse;
 }
 
-/** A student's activity on a course; latest is null when nothing is dated. */
-interface StudentActivity {
-  latest: string | null;
-}
-
 function activityKey(userId: number, courseId: number) {
   return `${userId}:${courseId}`;
 }
 
 /**
  * Activity per (student, course) from lesson progress, video watch events and
- * quiz attempts on the course's lessons. Any lesson progress row (even an
- * undated in-progress one) means the student has started; only dated events
- * set `latest`.
+ * quiz attempts on the course's lessons, keyed by activityKey. A key is present
+ * once the student has any activity (even an undated in-progress lesson); its
+ * value is the latest dated activity, or null when nothing is dated.
  */
 function getActivityByStudentCourse(courseIds: number[]) {
-  const progress = db
+  // Each source as (userId, lessonId, at) rows, combined into one stream.
+  const events = unionAll(
+    db
+      .select({
+        userId: sql<number>`${lessonProgress.userId}`.as("user_id"),
+        lessonId: sql<number>`${lessonProgress.lessonId}`.as("lesson_id"),
+        at: sql<string | null>`${lessonProgress.completedAt}`.as("at"),
+      })
+      .from(lessonProgress),
+    db
+      .select({
+        userId: sql<number>`${videoWatchEvents.userId}`.as("user_id"),
+        lessonId: sql<number>`${videoWatchEvents.lessonId}`.as("lesson_id"),
+        at: sql<string | null>`${videoWatchEvents.createdAt}`.as("at"),
+      })
+      .from(videoWatchEvents),
+    db
+      .select({
+        userId: sql<number>`${quizAttempts.userId}`.as("user_id"),
+        lessonId: sql<number>`${quizzes.lessonId}`.as("lesson_id"),
+        at: sql<string | null>`${quizAttempts.attemptedAt}`.as("at"),
+      })
+      .from(quizAttempts)
+      .innerJoin(quizzes, eq(quizAttempts.quizId, quizzes.id))
+  ).as("activity_events");
+
+  const rows = db
     .select({
-      userId: lessonProgress.userId,
+      userId: events.userId,
       courseId: modules.courseId,
-      latest: sql<string | null>`max(${lessonProgress.completedAt})`,
+      latest: sql<string | null>`max(${events.at})`,
     })
-    .from(lessonProgress)
-    .innerJoin(lessons, eq(lessonProgress.lessonId, lessons.id))
+    .from(events)
+    .innerJoin(lessons, eq(events.lessonId, lessons.id))
     .innerJoin(modules, eq(lessons.moduleId, modules.id))
     .where(inArray(modules.courseId, courseIds))
-    .groupBy(lessonProgress.userId, modules.courseId)
+    .groupBy(sql`${events.userId}`, modules.courseId)
     .all();
 
-  const videos = db
-    .select({
-      userId: videoWatchEvents.userId,
-      courseId: modules.courseId,
-      latest: sql<string | null>`max(${videoWatchEvents.createdAt})`,
-    })
-    .from(videoWatchEvents)
-    .innerJoin(lessons, eq(videoWatchEvents.lessonId, lessons.id))
-    .innerJoin(modules, eq(lessons.moduleId, modules.id))
-    .where(inArray(modules.courseId, courseIds))
-    .groupBy(videoWatchEvents.userId, modules.courseId)
-    .all();
-
-  const quizAttemptRows = db
-    .select({
-      userId: quizAttempts.userId,
-      courseId: modules.courseId,
-      latest: sql<string | null>`max(${quizAttempts.attemptedAt})`,
-    })
-    .from(quizAttempts)
-    .innerJoin(quizzes, eq(quizAttempts.quizId, quizzes.id))
-    .innerJoin(lessons, eq(quizzes.lessonId, lessons.id))
-    .innerJoin(modules, eq(lessons.moduleId, modules.id))
-    .where(inArray(modules.courseId, courseIds))
-    .groupBy(quizAttempts.userId, modules.courseId)
-    .all();
-
-  const byStudentCourse = new Map<string, StudentActivity>();
-  for (const row of [...progress, ...videos, ...quizAttemptRows]) {
-    const key = activityKey(row.userId, row.courseId);
-    const current = byStudentCourse.get(key);
-    byStudentCourse.set(key, {
-      latest: laterOf(current?.latest ?? null, row.latest),
-    });
-  }
-  return byStudentCourse;
-}
-
-function laterOf(a: string | null, b: string | null) {
-  if (a === null) return b;
-  if (b === null) return a;
-  return a > b ? a : b;
+  return new Map(rows.map((r) => [activityKey(r.userId, r.courseId), r.latest]));
 }
