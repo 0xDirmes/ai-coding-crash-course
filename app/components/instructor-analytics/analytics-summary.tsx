@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
 import { formatMoney } from "~/lib/utils";
 import type { AnalyticsTotals } from "~/services/analyticsService";
+import { formatRating } from "./course-analytics-stats";
 
 /** One metric tile in the summary grid. Add a tile per new total. */
 export function SummaryTile({
@@ -40,6 +41,10 @@ export function AnalyticsSummary({ totals }: { totals: AnalyticsTotals }) {
         subtitle={`${formatMoney(totals.grossSales)} gross sales`}
       />
       <SummaryTile label="Enrollments" value={totals.enrollmentCount} />
+      <SummaryTile
+        label="Average rating"
+        value={formatRating(totals.averageRating, totals.ratingCount)}
+      />
     </div>
   );
 }
