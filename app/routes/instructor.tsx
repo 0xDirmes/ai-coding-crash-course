@@ -11,6 +11,11 @@ import { AlertTriangle, BookOpen, GraduationCap, Plus, Users } from "lucide-reac
 import { CourseImage } from "~/components/course-image";
 import { data, isRouteErrorResponse } from "react-router";
 import { CourseStatus, UserRole } from "~/db/schema";
+import { getInstructorAnalytics } from "~/services/analyticsService";
+import { parseAnalyticsRange } from "~/lib/analytics-range";
+import { AnalyticsSummary } from "~/components/instructor-analytics/analytics-summary";
+import { CourseAnalyticsStats } from "~/components/instructor-analytics/course-analytics-stats";
+import { RangeSelector } from "~/components/instructor-analytics/range-selector";
 
 export function meta() {
   return [
@@ -36,6 +41,10 @@ export async function loader({ request }: Route.LoaderArgs) {
     });
   }
 
+  const range = parseAnalyticsRange(new URL(request.url).searchParams.get("range"));
+  const analytics = getInstructorAnalytics(currentUserId, range, new Date());
+  const statsByCourse = new Map(analytics.courses.map((c) => [c.courseId, c]));
+
   const instructorCourses = getCoursesByInstructor(currentUserId);
 
   const coursesWithStats = instructorCourses.map((course) => {
@@ -51,12 +60,14 @@ export async function loader({ request }: Route.LoaderArgs) {
       coverImageUrl: course.coverImageUrl,
       lessonCount,
       enrollmentCount,
+      // Drafts are excluded from analytics, so they have no stats.
+      analytics: statsByCourse.get(course.id) ?? null,
       createdAt: course.createdAt,
       updatedAt: course.updatedAt,
     };
   });
 
-  return { courses: coursesWithStats };
+  return { courses: coursesWithStats, totals: analytics.totals, range };
 }
 
 function statusBadge(status: string) {
@@ -121,7 +132,7 @@ export function HydrateFallback() {
 export default function InstructorDashboard({
   loaderData,
 }: Route.ComponentProps) {
-  const { courses } = loaderData;
+  const { courses, totals, range } = loaderData;
 
   return (
     <div className="mx-auto max-w-7xl p-6 lg:p-8">
@@ -148,6 +159,14 @@ export default function InstructorDashboard({
           </Button>
         </Link>
       </div>
+
+      <section className="mb-8" aria-label="Analytics">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-xl font-semibold">Analytics</h2>
+          <RangeSelector range={range} />
+        </div>
+        <AnalyticsSummary totals={totals} />
+      </section>
 
       {courses.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-16 text-center">
@@ -205,6 +224,9 @@ export default function InstructorDashboard({
                     </span>
                   </div>
                 </div>
+                {course.analytics && (
+                  <CourseAnalyticsStats stats={course.analytics} />
+                )}
               </CardContent>
               <CardFooter>
                 <Link to={`/instructor/${course.id}`} className="w-full">
