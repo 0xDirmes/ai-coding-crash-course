@@ -6,6 +6,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "~/components/ui/select";
+import { withSearchParam } from "~/lib/search-params";
 
 /**
  * Admin-only picker that opens the chosen instructor's dashboard by setting
@@ -23,11 +24,7 @@ export function InstructorPicker({
   }
 
   function handleChange(value: string) {
-    setSearchParams((params) => {
-      const next = new URLSearchParams(params);
-      next.set("instructorId", value);
-      return next;
-    });
+    setSearchParams((params) => withSearchParam(params, "instructorId", value));
   }
 
   return (

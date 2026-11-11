@@ -1,17 +1,7 @@
 import type { ReactNode } from "react";
 import { formatMoney } from "~/lib/utils";
+import { formatCompletionRate, formatRating } from "~/lib/analytics-format";
 import type { CourseAnalytics } from "~/services/analyticsService";
-
-/** Whole-percent completion rate, or an em dash when there are no enrollments. */
-export function formatCompletionRate(rate: number | null): string {
-  return rate === null ? "—" : `${Math.round(rate * 100)}%`;
-}
-
-/** "4.6 ★ (128)", or "No ratings yet" when there are none. */
-export function formatRating(averageRating: number | null, ratingCount: number) {
-  if (averageRating === null || ratingCount === 0) return "No ratings yet";
-  return `${averageRating.toFixed(1)} ★ (${ratingCount})`;
-}
 
 /** One label/value row in a course card's stats. Add a row per new metric. */
 export function CourseStatRow({

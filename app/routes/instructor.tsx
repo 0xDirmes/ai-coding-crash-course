@@ -1,13 +1,12 @@
 import { Link } from "react-router";
 import type { Route } from "./+types/instructor";
 import { getCoursesByInstructor, getLessonCountForCourse } from "~/services/courseService";
-import { getEnrollmentCountForCourse } from "~/services/enrollmentService";
-import { getCurrentUserId } from "~/lib/session";
+import { requireInstructorOrAdmin } from "~/lib/access.server";
 import { getUserById, getUsersByRole } from "~/services/userService";
 import { Card, CardContent, CardFooter, CardHeader } from "~/components/ui/card";
 import { Button } from "~/components/ui/button";
 import { Skeleton } from "~/components/ui/skeleton";
-import { AlertTriangle, BookOpen, GraduationCap, Plus, Users } from "lucide-react";
+import { AlertTriangle, BookOpen, GraduationCap, Plus } from "lucide-react";
 import { CourseImage } from "~/components/course-image";
 import { data, isRouteErrorResponse } from "react-router";
 import { CourseStatus, UserRole } from "~/db/schema";
@@ -27,19 +26,15 @@ export function meta() {
 }
 
 export async function loader({ request }: Route.LoaderArgs) {
-  const currentUserId = await getCurrentUserId(request);
-
-  if (!currentUserId) {
-    throw data("Select a user from the DevUI panel to view your courses.", {
-      status: 401,
-    });
-  }
-
-  const user = getUserById(currentUserId);
+  const { user } = await requireInstructorOrAdmin(request);
   const searchParams = new URL(request.url).searchParams;
-  const view = user
-    ? resolveDashboardView(user, searchParams.get("instructorId"), getUserById)
-    : ({ mode: "forbidden" } as const);
+
+  // Keep the instructor resolveDashboardView looks up so we don't fetch it twice.
+  let chosenInstructor: ReturnType<typeof getUserById>;
+  const view = resolveDashboardView(user, searchParams.get("instructorId"), (id) => {
+    chosenInstructor = getUserById(id);
+    return chosenInstructor;
+  });
 
   if (view.mode === "forbidden") {
     throw data("Only instructors can access this page.", {
@@ -54,10 +49,9 @@ export async function loader({ request }: Route.LoaderArgs) {
   const range = parseAnalyticsRange(searchParams.get("range"));
 
   if (view.mode === "picker") {
-    const instructors = getUsersByRole(UserRole.Instructor).map((i) => ({
-      id: i.id,
-      name: i.name,
-    }));
+    const instructors = getUsersByRole(UserRole.Instructor).map(
+      (instructor) => ({ id: instructor.id, name: instructor.name })
+    );
     return { mode: view.mode, instructors, range } as const;
   }
 
@@ -69,7 +63,6 @@ export async function loader({ request }: Route.LoaderArgs) {
 
   const coursesWithStats = instructorCourses.map((course) => {
     const lessonCount = getLessonCountForCourse(course.id);
-    const enrollmentCount = getEnrollmentCountForCourse(course.id);
 
     return {
       id: course.id,
@@ -79,7 +72,6 @@ export async function loader({ request }: Route.LoaderArgs) {
       status: course.status,
       coverImageUrl: course.coverImageUrl,
       lessonCount,
-      enrollmentCount,
       // Drafts are excluded from analytics, so they have no stats.
       analytics: statsByCourse.get(course.id) ?? null,
       createdAt: course.createdAt,
@@ -91,7 +83,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     mode: view.mode,
     // Admins get a read-only view of someone else's dashboard.
     readOnly: view.mode === "admin",
-    instructorName: getUserById(instructorId)?.name ?? "",
+    instructorName: (view.mode === "own" ? user : chosenInstructor)?.name ?? "",
     courses: coursesWithStats,
     totals: analytics.totals,
     range,
@@ -278,13 +270,6 @@ export default function InstructorDashboard({
                     <span>
                       {course.lessonCount}{" "}
                       {course.lessonCount === 1 ? "lesson" : "lessons"}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <Users className="size-4" />
-                    <span>
-                      {course.enrollmentCount}{" "}
-                      {course.enrollmentCount === 1 ? "student" : "students"}
                     </span>
                   </div>
                 </div>

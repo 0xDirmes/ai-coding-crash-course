@@ -11,6 +11,7 @@ import {
   ANALYTICS_RANGE_LABELS,
   type AnalyticsRange,
 } from "~/lib/analytics-range";
+import { withSearchParam } from "~/lib/search-params";
 
 /**
  * Time-range picker stored in `?range=`. Other search params (e.g. an admin's
@@ -20,11 +21,7 @@ export function RangeSelector({ range }: { range: AnalyticsRange }) {
   const [, setSearchParams] = useSearchParams();
 
   function handleChange(value: string) {
-    setSearchParams((params) => {
-      const next = new URLSearchParams(params);
-      next.set("range", value);
-      return next;
-    });
+    setSearchParams((params) => withSearchParam(params, "range", value));
   }
 
   return (
