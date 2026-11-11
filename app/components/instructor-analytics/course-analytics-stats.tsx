@@ -2,6 +2,12 @@ import type { ReactNode } from "react";
 import { formatMoney } from "~/lib/utils";
 import type { CourseAnalytics } from "~/services/analyticsService";
 
+/** "4.6 ★ (128)", or "No ratings yet" when there are none. */
+export function formatRating(averageRating: number | null, ratingCount: number) {
+  if (averageRating === null || ratingCount === 0) return "No ratings yet";
+  return `${averageRating.toFixed(1)} ★ (${ratingCount})`;
+}
+
 /** One label/value row in a course card's stats. Add a row per new metric. */
 export function CourseStatRow({
   label,
@@ -25,6 +31,10 @@ export function CourseAnalyticsStats({ stats }: { stats: CourseAnalytics }) {
       <CourseStatRow label="Earnings" value={formatMoney(stats.earnings)} />
       <CourseStatRow label="Gross sales" value={formatMoney(stats.grossSales)} />
       <CourseStatRow label="Enrollments" value={stats.enrollmentCount} />
+      <CourseStatRow
+        label="Average rating"
+        value={formatRating(stats.averageRating, stats.ratingCount)}
+      />
     </dl>
   );
 }
