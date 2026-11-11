@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { formatMoney } from "~/lib/utils";
 import type { CourseAnalytics } from "~/services/analyticsService";
+import { formatCompletionRate } from "./analytics-summary";
 
 /** One label/value row in a course card's stats. Add a row per new metric. */
 export function CourseStatRow({
@@ -25,6 +26,12 @@ export function CourseAnalyticsStats({ stats }: { stats: CourseAnalytics }) {
       <CourseStatRow label="Earnings" value={formatMoney(stats.earnings)} />
       <CourseStatRow label="Gross sales" value={formatMoney(stats.grossSales)} />
       <CourseStatRow label="Enrollments" value={stats.enrollmentCount} />
+      <CourseStatRow
+        label="Completion rate"
+        value={formatCompletionRate(stats.completionRate)}
+      />
+      <CourseStatRow label="Never started" value={stats.neverStartedCount} />
+      <CourseStatRow label="Dropped off" value={stats.droppedOffCount} />
     </dl>
   );
 }

@@ -30,6 +30,11 @@ export function SummaryTile({
   );
 }
 
+/** Whole-percent completion rate, or an em dash when there are no enrollments. */
+export function formatCompletionRate(rate: number | null): string {
+  return rate === null ? "—" : `${Math.round(rate * 100)}%`;
+}
+
 /** Totals across the instructor's courses, shown at the top of the page. */
 export function AnalyticsSummary({ totals }: { totals: AnalyticsTotals }) {
   return (
@@ -40,6 +45,17 @@ export function AnalyticsSummary({ totals }: { totals: AnalyticsTotals }) {
         subtitle={`${formatMoney(totals.grossSales)} gross sales`}
       />
       <SummaryTile label="Enrollments" value={totals.enrollmentCount} />
+      <SummaryTile
+        label="Completion rate"
+        value={formatCompletionRate(totals.completionRate)}
+        subtitle={`${totals.completedCount} of ${totals.enrollmentCount} completed`}
+      />
+      <SummaryTile label="Never started" value={totals.neverStartedCount} />
+      <SummaryTile
+        label="Dropped off"
+        value={totals.droppedOffCount}
+        subtitle="No activity in the last 30 days"
+      />
     </div>
   );
 }
