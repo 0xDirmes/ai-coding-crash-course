@@ -79,6 +79,15 @@ function enroll(courseId: number, enrolledAt = daysBefore(1)) {
     .get();
 }
 
+function rate(courseId: number, rating: number, createdAt = daysBefore(1)) {
+  const student = createStudent();
+  return testDb
+    .insert(schema.courseRatings)
+    .values({ userId: student.id, courseId, rating, createdAt, updatedAt: createdAt })
+    .returning()
+    .get();
+}
+
 function statsFor(
   analytics: ReturnType<typeof getInstructorAnalytics>,
   courseId: number
@@ -501,6 +510,88 @@ describe("getInstructorAnalytics", () => {
         enrollmentCount: 2,
         completedCount: 1,
         completionRate: 0.5,
+      });
+    });
+  });
+
+  describe("average rating", () => {
+    it("averages a course's ratings and reports how many there are", () => {
+      rate(base.course.id, 5);
+      rate(base.course.id, 4);
+      rate(base.course.id, 3);
+      rate(base.course.id, 4);
+
+      const analytics = getInstructorAnalytics(base.instructor.id, "all", NOW);
+
+      const stats = statsFor(analytics, base.course.id);
+      expect(stats.averageRating).toBe(4);
+      expect(stats.ratingCount).toBe(4);
+    });
+
+    it("weights the overall average by rating count, not by course", () => {
+      const second = createCourse(
+        base.instructor.id,
+        schema.CourseStatus.Published,
+        "second"
+      );
+      for (let i = 0; i < 4; i++) rate(base.course.id, 5);
+      rate(second.id, 1);
+
+      const analytics = getInstructorAnalytics(base.instructor.id, "all", NOW);
+
+      expect(statsFor(analytics, base.course.id).averageRating).toBe(5);
+      expect(statsFor(analytics, second.id).averageRating).toBe(1);
+      // 21 stars ÷ 5 ratings; the mean of course averages would be 3.
+      expect(analytics.totals.averageRating).toBeCloseTo(4.2);
+      expect(analytics.totals.ratingCount).toBe(5);
+    });
+
+    it("has no average when there are no ratings", () => {
+      const analytics = getInstructorAnalytics(base.instructor.id, "all", NOW);
+
+      expect(statsFor(analytics, base.course.id)).toMatchObject({
+        averageRating: null,
+        ratingCount: 0,
+      });
+      expect(analytics.totals).toMatchObject({
+        averageRating: null,
+        ratingCount: 0,
+      });
+    });
+
+    it.each([
+      ["7d", 7],
+      ["30d", 30],
+      ["90d", 90],
+    ] as const)(
+      "%s only counts ratings created on or after the cutoff",
+      (range, days) => {
+        rate(base.course.id, 4, daysBefore(days)); // exactly at cutoff
+        rate(base.course.id, 2, daysBefore(days, 1)); // just inside
+        rate(base.course.id, 5, daysBefore(days, -1)); // just outside
+
+        const analytics = getInstructorAnalytics(base.instructor.id, range, NOW);
+
+        expect(statsFor(analytics, base.course.id)).toMatchObject({
+          averageRating: 3,
+          ratingCount: 2,
+        });
+        expect(analytics.totals).toMatchObject({
+          averageRating: 3,
+          ratingCount: 2,
+        });
+      }
+    );
+
+    it("all counts every rating regardless of age", () => {
+      rate(base.course.id, 1, "2015-01-01T00:00:00.000Z");
+      rate(base.course.id, 5, daysBefore(1));
+
+      const analytics = getInstructorAnalytics(base.instructor.id, "all", NOW);
+
+      expect(statsFor(analytics, base.course.id)).toMatchObject({
+        averageRating: 3,
+        ratingCount: 2,
       });
     });
   });

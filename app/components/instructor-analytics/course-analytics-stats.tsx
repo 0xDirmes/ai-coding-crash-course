@@ -1,7 +1,17 @@
 import type { ReactNode } from "react";
 import { formatMoney } from "~/lib/utils";
 import type { CourseAnalytics } from "~/services/analyticsService";
-import { formatCompletionRate } from "./analytics-summary";
+
+/** Whole-percent completion rate, or an em dash when there are no enrollments. */
+export function formatCompletionRate(rate: number | null): string {
+  return rate === null ? "—" : `${Math.round(rate * 100)}%`;
+}
+
+/** "4.6 ★ (128)", or "No ratings yet" when there are none. */
+export function formatRating(averageRating: number | null, ratingCount: number) {
+  if (averageRating === null || ratingCount === 0) return "No ratings yet";
+  return `${averageRating.toFixed(1)} ★ (${ratingCount})`;
+}
 
 /** One label/value row in a course card's stats. Add a row per new metric. */
 export function CourseStatRow({
@@ -32,6 +42,10 @@ export function CourseAnalyticsStats({ stats }: { stats: CourseAnalytics }) {
       />
       <CourseStatRow label="Never started" value={stats.neverStartedCount} />
       <CourseStatRow label="Dropped off" value={stats.droppedOffCount} />
+      <CourseStatRow
+        label="Average rating"
+        value={formatRating(stats.averageRating, stats.ratingCount)}
+      />
     </dl>
   );
 }
