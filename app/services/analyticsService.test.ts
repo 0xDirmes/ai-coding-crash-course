@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createTestDb, seedBaseData } from "~/test/setup";
 import * as schema from "~/db/schema";
+import { eq } from "drizzle-orm";
 
 let testDb: ReturnType<typeof createTestDb>;
 let base: ReturnType<typeof seedBaseData>;
@@ -278,6 +279,238 @@ describe("getInstructorAnalytics", () => {
       const stats = statsFor(analytics, base.course.id);
       expect(stats.grossSales).toBe(1500);
       expect(stats.enrollmentCount).toBe(2);
+    });
+  });
+
+  describe("completion and engagement", () => {
+    function completeEnrollment(enrollmentId: number, completedAt = daysBefore(1)) {
+      testDb
+        .update(schema.enrollments)
+        .set({ completedAt })
+        .where(eq(schema.enrollments.id, enrollmentId))
+        .run();
+    }
+
+    function createLesson(courseId: number) {
+      const mod = testDb
+        .insert(schema.modules)
+        .values({ courseId, title: "Module", position: 1 })
+        .returning()
+        .get();
+      return testDb
+        .insert(schema.lessons)
+        .values({ moduleId: mod.id, title: "Lesson", position: 1 })
+        .returning()
+        .get();
+    }
+
+    function lessonProgress(
+      userId: number,
+      lessonId: number,
+      completedAt: string | null
+    ) {
+      testDb
+        .insert(schema.lessonProgress)
+        .values({
+          userId,
+          lessonId,
+          status:
+            completedAt === null
+              ? schema.LessonProgressStatus.InProgress
+              : schema.LessonProgressStatus.Completed,
+          completedAt,
+        })
+        .run();
+    }
+
+    function watchEvent(userId: number, lessonId: number, createdAt: string) {
+      testDb
+        .insert(schema.videoWatchEvents)
+        .values({ userId, lessonId, eventType: "play", positionSeconds: 0, createdAt })
+        .run();
+    }
+
+    function quizAttempt(userId: number, lessonId: number, attemptedAt: string) {
+      const quiz = testDb
+        .insert(schema.quizzes)
+        .values({ lessonId, title: "Quiz", passingScore: 0.7 })
+        .returning()
+        .get();
+      testDb
+        .insert(schema.quizAttempts)
+        .values({ userId, quizId: quiz.id, score: 0.5, passed: false, attemptedAt })
+        .run();
+    }
+
+    it("never started counts enrollments with no progress, video events, or quiz attempts on the course", () => {
+      const lesson = createLesson(base.course.id);
+      const otherCourse = createCourse(base.instructor.id, schema.CourseStatus.Published, "other");
+      const otherLesson = createLesson(otherCourse.id);
+
+      lessonProgress(enroll(base.course.id).userId, lesson.id, null); // opened a lesson
+      watchEvent(enroll(base.course.id).userId, lesson.id, daysBefore(1));
+      quizAttempt(enroll(base.course.id).userId, lesson.id, daysBefore(1));
+      enroll(base.course.id); // nothing at all
+      // Activity only on another course doesn't count as starting this one.
+      const elsewhere = enroll(base.course.id);
+      lessonProgress(elsewhere.userId, otherLesson.id, daysBefore(1));
+      watchEvent(elsewhere.userId, otherLesson.id, daysBefore(1));
+      quizAttempt(elsewhere.userId, otherLesson.id, daysBefore(1));
+
+      const analytics = getInstructorAnalytics(base.instructor.id, "all", NOW);
+
+      expect(statsFor(analytics, base.course.id).neverStartedCount).toBe(2);
+      expect(statsFor(analytics, otherCourse.id).neverStartedCount).toBe(0);
+      expect(analytics.totals.neverStartedCount).toBe(2);
+    });
+
+    it.each([
+      ["lesson completion", (userId: number, lessonId: number, at: string) => lessonProgress(userId, lessonId, at)],
+      ["video watch event", watchEvent],
+      ["quiz attempt", quizAttempt],
+    ] as const)(
+      "a %s within the last 30 days keeps a student out of dropped off; one just before does not",
+      (_source, recordActivity) => {
+        const lesson = createLesson(base.course.id);
+        const justOutside = enroll(base.course.id, daysBefore(60));
+        recordActivity(justOutside.userId, lesson.id, daysBefore(30, -1));
+        const atBoundary = enroll(base.course.id, daysBefore(60));
+        recordActivity(atBoundary.userId, lesson.id, daysBefore(30));
+        const recent = enroll(base.course.id, daysBefore(60));
+        recordActivity(recent.userId, lesson.id, daysBefore(1));
+
+        const analytics = getInstructorAnalytics(base.instructor.id, "all", NOW);
+
+        expect(statsFor(analytics, base.course.id)).toMatchObject({
+          neverStartedCount: 0,
+          droppedOffCount: 1,
+        });
+        expect(analytics.totals.droppedOffCount).toBe(1);
+      }
+    );
+
+    it("uses the latest activity across sources", () => {
+      const lesson = createLesson(base.course.id);
+      const student = enroll(base.course.id, daysBefore(90));
+      lessonProgress(student.userId, lesson.id, daysBefore(80));
+      quizAttempt(student.userId, lesson.id, daysBefore(70));
+      watchEvent(student.userId, lesson.id, daysBefore(2));
+
+      const analytics = getInstructorAnalytics(base.instructor.id, "all", NOW);
+
+      expect(statsFor(analytics, base.course.id).droppedOffCount).toBe(0);
+    });
+
+    it("never counts completed or never-started students as dropped off", () => {
+      const lesson = createLesson(base.course.id);
+      const completed = enroll(base.course.id, daysBefore(90));
+      lessonProgress(completed.userId, lesson.id, daysBefore(60));
+      completeEnrollment(completed.id, daysBefore(60));
+      enroll(base.course.id, daysBefore(90)); // never started
+
+      const analytics = getInstructorAnalytics(base.instructor.id, "all", NOW);
+
+      expect(statsFor(analytics, base.course.id)).toMatchObject({
+        completedCount: 1,
+        neverStartedCount: 1,
+        droppedOffCount: 0,
+      });
+    });
+
+    it("an undated in-progress lesson counts as started but not as dated activity", () => {
+      const lesson = createLesson(base.course.id);
+      const opened = enroll(base.course.id, daysBefore(90));
+      lessonProgress(opened.userId, lesson.id, null);
+
+      const analytics = getInstructorAnalytics(base.instructor.id, "all", NOW);
+
+      expect(statsFor(analytics, base.course.id)).toMatchObject({
+        neverStartedCount: 0,
+        droppedOffCount: 0,
+      });
+    });
+
+    it("keeps the 30-day inactivity window fixed whatever range is selected", () => {
+      const lesson = createLesson(base.course.id);
+      // Inside the 7d cohort, last active 20 days ago: still active.
+      const active = enroll(base.course.id, daysBefore(3));
+      watchEvent(active.userId, lesson.id, daysBefore(20));
+      // Inside the 90d cohort, last active 40 days ago: dropped off.
+      const stalled = enroll(base.course.id, daysBefore(60));
+      watchEvent(stalled.userId, lesson.id, daysBefore(40));
+
+      const week = getInstructorAnalytics(base.instructor.id, "7d", NOW);
+      const quarter = getInstructorAnalytics(base.instructor.id, "90d", NOW);
+
+      expect(statsFor(week, base.course.id)).toMatchObject({
+        enrollmentCount: 1,
+        droppedOffCount: 0,
+      });
+      expect(statsFor(quarter, base.course.id)).toMatchObject({
+        enrollmentCount: 2,
+        droppedOffCount: 1,
+      });
+    });
+
+    it("completion rate is completed ÷ enrolled, and null with no enrollments", () => {
+      const other = createCourse(base.instructor.id, schema.CourseStatus.Published, "empty");
+      const first = enroll(base.course.id);
+      enroll(base.course.id);
+      enroll(base.course.id);
+      enroll(base.course.id);
+      completeEnrollment(first.id);
+
+      const analytics = getInstructorAnalytics(base.instructor.id, "all", NOW);
+
+      expect(statsFor(analytics, base.course.id)).toMatchObject({
+        completedCount: 1,
+        completionRate: 0.25,
+      });
+      expect(statsFor(analytics, other.id)).toMatchObject({
+        completedCount: 0,
+        completionRate: null,
+      });
+    });
+
+    it("totals recompute completion rate from summed counts rather than averaging courses", () => {
+      const other = createCourse(base.instructor.id, schema.CourseStatus.Published, "other");
+      completeEnrollment(enroll(base.course.id).id); // course A: 1/1
+      completeEnrollment(enroll(other.id).id); // course B: 1/4
+      enroll(other.id);
+      enroll(other.id);
+      enroll(other.id);
+
+      const analytics = getInstructorAnalytics(base.instructor.id, "all", NOW);
+
+      // Averaging per course would give (1 + 0.25) / 2 = 0.625.
+      expect(analytics.totals).toMatchObject({
+        completedCount: 2,
+        completionRate: 0.4,
+      });
+    });
+
+    it("totals completion rate is null with no enrollments", () => {
+      const analytics = getInstructorAnalytics(base.instructor.id, "all", NOW);
+
+      expect(analytics.totals).toMatchObject({
+        completedCount: 0,
+        completionRate: null,
+      });
+    });
+
+    it("cohort metrics only cover students who enrolled in the range", () => {
+      // Enrolled before the 30d cutoff but completed recently: outside the cohort.
+      completeEnrollment(enroll(base.course.id, daysBefore(30, -1)).id, daysBefore(1));
+      completeEnrollment(enroll(base.course.id, daysBefore(30)).id);
+      enroll(base.course.id, daysBefore(5));
+
+      const analytics = getInstructorAnalytics(base.instructor.id, "30d", NOW);
+
+      expect(statsFor(analytics, base.course.id)).toMatchObject({
+        enrollmentCount: 2,
+        completedCount: 1,
+        completionRate: 0.5,
+      });
     });
   });
 
