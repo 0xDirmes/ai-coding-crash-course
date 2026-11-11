@@ -1,7 +1,13 @@
 import { and, eq, gte, inArray, sql, type SQL } from "drizzle-orm";
 import type { SQLiteColumn } from "drizzle-orm/sqlite-core";
 import { db } from "~/db";
-import { CourseStatus, courses, enrollments, purchases } from "~/db/schema";
+import {
+  CourseStatus,
+  courseRatings,
+  courses,
+  enrollments,
+  purchases,
+} from "~/db/schema";
 import {
   ANALYTICS_RANGE_DAYS,
   type AnalyticsRange,
@@ -25,6 +31,11 @@ export interface CourseAnalytics {
   grossSales: number;
   earnings: number;
   enrollmentCount: number;
+  /** Sum of all stars, kept so totals can weight by rating count. */
+  ratingStars: number;
+  ratingCount: number;
+  /** ratingStars ÷ ratingCount, unrounded; null when there are no ratings. */
+  averageRating: number | null;
 }
 
 /** Stats across all of the instructor's courses. Money is in cents. */
@@ -32,6 +43,10 @@ export interface AnalyticsTotals {
   grossSales: number;
   earnings: number;
   enrollmentCount: number;
+  ratingStars: number;
+  ratingCount: number;
+  /** Weighted by count (total stars ÷ total ratings); null when none. */
+  averageRating: number | null;
 }
 
 export interface InstructorAnalytics {
@@ -54,6 +69,7 @@ export function getInstructorAnalytics(
 
   const grossSales = getGrossSalesByCourse(courseIds, cutoff);
   const enrollmentCounts = getEnrollmentCountsByCourse(courseIds, cutoff);
+  const ratings = getRatingsByCourse(courseIds, cutoff);
 
   const courseStats = courseIds.map((courseId): CourseAnalytics => {
     const gross = grossSales.get(courseId) ?? 0;
@@ -62,6 +78,7 @@ export function getInstructorAnalytics(
       grossSales: gross,
       earnings: earningsFromGross(gross),
       enrollmentCount: enrollmentCounts.get(courseId) ?? 0,
+      ...ratingStats(ratings.get(courseId)),
     };
   });
 
@@ -76,6 +93,20 @@ function buildTotals(courseStats: CourseAnalytics[]): AnalyticsTotals {
     grossSales: sum((c) => c.grossSales),
     earnings: sum((c) => c.earnings),
     enrollmentCount: sum((c) => c.enrollmentCount),
+    ...ratingStats({
+      stars: sum((c) => c.ratingStars),
+      count: sum((c) => c.ratingCount),
+    }),
+  };
+}
+
+function ratingStats(ratings: { stars: number; count: number } | undefined) {
+  const stars = ratings?.stars ?? 0;
+  const count = ratings?.count ?? 0;
+  return {
+    ratingStars: stars,
+    ratingCount: count,
+    averageRating: count === 0 ? null : stars / count,
   };
 }
 
@@ -149,4 +180,24 @@ function getEnrollmentCountsByCourse(courseIds: number[], cutoff: string | null)
     .groupBy(enrollments.courseId)
     .all();
   return new Map(rows.map((r) => [r.courseId, r.count]));
+}
+
+/** Star total and rating count per course, filtered on rating creation date. */
+function getRatingsByCourse(courseIds: number[], cutoff: string | null) {
+  const rows = db
+    .select({
+      courseId: courseRatings.courseId,
+      stars: sql<number>`coalesce(sum(${courseRatings.rating}), 0)`,
+      count: sql<number>`count(*)`,
+    })
+    .from(courseRatings)
+    .where(
+      and(
+        inArray(courseRatings.courseId, courseIds),
+        onOrAfter(courseRatings.createdAt, cutoff)
+      )
+    )
+    .groupBy(courseRatings.courseId)
+    .all();
+  return new Map(rows.map((r) => [r.courseId, { stars: r.stars, count: r.count }]));
 }
